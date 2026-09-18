@@ -123,7 +123,7 @@ Register the endpoint, then verify every payload before acting on it.
 
 - Payloads are signed **HMAC-SHA256**, carried in the **`mailtrap-signature`** header. HTTP header names are case-insensitive; there is **no `X-` prefix**.
 - The signing secret is **viewable and resettable in the webhook's details in the Mailtrap UI**. The CLI returns it only from `webhooks create`; `webhooks get` and `list` do not include it.
-- Failed deliveries are **retried for hours**, so a slow handler earns a queue of duplicates. Acknowledge with a 2xx quickly and move slow work to a queue. (Mailtrap's inbound and Email API webhook pages currently state different retry schedules; do not build on a specific count.)
+- Failed deliveries are **retried every 5 minutes for about 3 hours, then the webhook is paused** (`active: false`) until you re-enable it. A slow handler earns a queue of duplicates; a dead one goes silent. Acknowledge with a 2xx quickly and move slow work to a queue.
 
 **Verify the signature against the raw request body.** Deserializing and re-serializing the JSON reorders keys and normalizes whitespace, which changes the bytes the HMAC was computed over and makes every signature fail. In practice this means reading the body as text *before* any framework model-binding touches it.
 

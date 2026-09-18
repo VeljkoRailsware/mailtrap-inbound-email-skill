@@ -64,7 +64,7 @@ mailtrap inbound messages  list | get | delete | reply | reply-all | forward
 mailtrap inbound threads   list | get | delete
 ```
 
-**Always pass `-o json`.** Output defaults to `table`, which is meant for humans. Global flags: `--api-token` (env `MAILTRAP_API_TOKEN`), `--account-id` (env `MAILTRAP_ACCOUNT_ID`), `-o/--output`.
+**Always pass `-o json`**, or set `MAILTRAP_OUTPUT=json` once (works on v0.6.0, though no help text mentions it). Output defaults to `table`, which is meant for humans. Global flags: `--api-token` (env `MAILTRAP_API_TOKEN`), `--account-id` (env `MAILTRAP_ACCOUNT_ID`), `-o/--output`.
 
 If the [Mailtrap MCP server](https://github.com/mailtrap/mailtrap-mcp) is already connected, it exposes the same operations as tools (`list-inbound-messages`, `reply-to-inbound-message`, and so on).
 
@@ -90,9 +90,9 @@ So for attachments, headers, cc/bcc, threading fields, raw MIME, or pagination, 
 
 ### Attachments
 
-`list` rows carry the metadata — `attachment_id`, `filename`, `content_type`, `content_disposition`, `content_id`, `size`. `get` adds **`download_url`** and **`download_url_expires_at`**: a signed S3 link good for roughly an hour, so fetch it while handling the message rather than storing it for later. `raw_message_url` (also expiring) returns the full MIME. The `attachments` key is omitted entirely when a message has none, so treat it as optional rather than an empty array.
+`list` rows carry the metadata — `attachment_id`, `filename`, `content_type`, `content_disposition`, `content_id`, `size`. `get` adds **`download_url`** and **`download_url_expires_at`**: a signed S3 link good for roughly an hour, so fetch it while handling the message rather than storing it for later. `raw_message_url` (also expiring) returns the full MIME. The API returns `attachments` as an empty array when a message has none; it is the CLI that drops the key on every message, so read attachments through the API.
 
-**Size cap.** Inbound rejects anything over **10 MiB (10,485,760 bytes)** at SMTP time with `552 5.3.4 Message exceeds max size`. The rejection happens before delivery, so nothing is stored and no webhook fires — the sender gets the bounce and the inbox stays empty. The ceiling applies to the *encoded* MIME message, and base64 adds roughly a third, so a raw attachment much above ~7.5 MB will not fit. If a message someone insists they sent never appears, check its size first.
+**Size cap.** Inbound rejects anything over the account's maximum email size at SMTP time with `552 5.3.4 Message exceeds max size` — **10 MB on the lower Email API/SMTP tiers, up to 30 MB on Business and Enterprise** (pricing page, "Max email size"). The rejection happens before delivery, so nothing is stored and no webhook fires — the sender gets the bounce and the inbox stays empty. The ceiling applies to the *encoded* MIME message, and base64 adds roughly a third, so on a 10 MB plan a raw attachment much above ~7.5 MB will not fit. If a message someone insists they sent never appears, check its size first.
 
 The `get` response includes a `domain_id` on **every** inbox, hosted ones included — it is not a reliable signal for whether an inbox is custom-domain. Judge that from the address or from how the inbox was created.
 
@@ -122,8 +122,8 @@ mailtrap inbound messages forward --inbox-id INBOX_ID --id MESSAGE_ID --to colle
 Register the endpoint, then verify every payload before acting on it.
 
 - Payloads are signed **HMAC-SHA256**, carried in the **`mailtrap-signature`** header. HTTP header names are case-insensitive; there is **no `X-` prefix**.
-- The signing secret is returned **only once, when the webhook is created**. Store it then or recreate the webhook.
-- Failed deliveries retry with exponential backoff, up to **10 attempts over 24 hours**. Acknowledge with a 2xx quickly and move slow work to a queue.
+- The signing secret is **viewable and resettable in the webhook's details in the Mailtrap UI**. The CLI returns it only from `webhooks create`; `webhooks get` and `list` do not include it.
+- Failed deliveries are **retried for hours**, so a slow handler earns a queue of duplicates. Acknowledge with a 2xx quickly and move slow work to a queue. (Mailtrap's inbound and Email API webhook pages currently state different retry schedules; do not build on a specific count.)
 
 **Verify the signature against the raw request body.** Deserializing and re-serializing the JSON reorders keys and normalizes whitespace, which changes the bytes the HMAC was computed over and makes every signature fail. In practice this means reading the body as text *before* any framework model-binding touches it.
 
@@ -142,11 +142,11 @@ Official SDKs cover the inbound resources — read the repository README for the
 | Writing `inbound.mailtrap.io`                         | The domain is **`inbound-mailtrap.io`**, with a hyphen.                                                  |
 | Expecting an `X-Mailtrap-Signature` header            | The header is `mailtrap-signature` — no `X-` prefix.                                                     |
 | `create` returns 403                                  | The token is domain-scoped. Folder and inbox creation needs an **account-level** token.                  |
-| Parsing CLI output that arrived as a table            | Pass `-o json`; `table` is the default and is for humans.                                                |
+| Parsing CLI output that arrived as a table            | Pass `-o json` or set `MAILTRAP_OUTPUT=json`; `table` is the default and is for humans.                  |
 | Confusing Sandbox addresses with Inbound addresses    | `inbox.mailtrap.io` is Email Sandbox; `inbound-mailtrap.io` is Inbound Email.                            |
 | Running `reply` or `forward` while exploring an inbox | Both deliver real mail. Use `list` and `get` to inspect.                                                 |
 | Setting `--from` on a hosted inbox                    | `--from` is supported on **custom-domain inboxes only**.                                                 |
-| Waiting on a large attachment that never arrives      | 10 MiB cap, rejected at SMTP with `552 5.3.4`. No message, no webhook. Base64 means ~7.5 MB of raw file. |
+| Waiting on a large attachment that never arrives      | Plan size cap (10 MB lower tiers, 30 MB Business/Enterprise), SMTP `552 5.3.4`. No message, no webhook.  |
 | Using `domain_id` to detect a custom-domain inbox     | Hosted inboxes return a `domain_id` too. Use the address instead.                                        |
 | Concluding a message has no attachments from the CLI  | CLI `get`/`list` drop the `attachments` field entirely. Call the API for anything beyond body and subject.|
 | Storing a `download_url` to fetch later               | Signed and expires in about an hour. Download during processing, or re-read the message.                 |
